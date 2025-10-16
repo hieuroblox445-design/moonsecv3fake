@@ -1,144 +1,101 @@
 import discord
+from discord.ext import commands
 from discord import app_commands
-import os
 import asyncio
-import json
-from datetime import datetime, timedelta
-from flask import Flask
-from threading import Thread
-
-# Flask keep alive
-app = Flask('')
-@app.route('/')
-def home():
-    return "✅ Bot is alive!"
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-Thread(target=run_flask, daemon=True).start()
-
-# Bot setup
-TOKEN = os.environ.get('TOKEN')
-if not TOKEN:
-    print("❌ Missing TOKEN")
-    exit(1)
+import io
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
-tree = app_commands.CommandTree(client)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Simple encryption (thay thế cryptography)
-import base64
-def simple_encrypt(text, password):
-    """Mã hóa đơn giản base64 + XOR"""
-    encoded = base64.b64encode(text.encode()).decode()
-    encrypted = ''.join(chr(ord(c) ^ ord(password[i % len(password)])) for i, c in enumerate(encoded))
-    return base64.b64encode(encrypted.encode()).decode()
-
-def simple_decrypt(encrypted_text, password):
-    """Giải mã"""
-    try:
-        decoded = base64.b64decode(encrypted_text).decode()
-        decrypted = ''.join(chr(ord(c) ^ ord(password[i % len(password)])) for i, c in enumerate(decoded))
-        return base64.b64decode(decrypted).decode()
-    except:
-        return None
-
-# Session storage
-sessions = {}
-
-@client.event
+# Khi bot khởi động
+@bot.event
 async def on_ready():
-    print(f'✅ {client.user} is ready!')
-    await tree.sync()
-    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="/mahoa"))
+    print(f"✅ Bot đã đăng nhập: {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"🔧 Slash commands synced: {len(synced)} lệnh")
+    except Exception as e:
+        print(f"❌ Lỗi sync slash: {e}")
 
-# Slash command
-@tree.command(name="mahoa", description="Mã hóa source code")
-async def mahoa_slash(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    sessions[user_id] = {'step': 'waiting_source', 'time': datetime.now()}
-    
-    embed = discord.Embed(title="🔐 MÃ HÓA SOURCE CODE", description="**Vui lòng gửi source code của bạn để tiến hành mã hóa**", color=0x5865F2)
-    embed.add_field(name="📤 Cách gửi:", value="• Gửi code trực tiếp\n• Hoặc attach file (.txt, .py, .js, ...)", inline=False)
-    await interaction.response.send_message(embed=embed)
+# =====================
+# 📁 DOCFILE PREFIX CMD
+# =====================
+@bot.command(name="docfile")
+async def docfile_prefix(ctx):
+    await ctx.send("📎 Gửi file .txt / .md / .log bạn muốn đọc trong vòng 30 giây.")
 
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return
+    def check(m):
+        return m.author == ctx.author and m.attachments
 
-    # Command !mahoa
-    if message.content == '!mahoa':
-        user_id = message.author.id
-        sessions[user_id] = {'step': 'waiting_source', 'time': datetime.now()}
-        await message.reply("🔐 **Vui lòng gửi source code của bạn để tiến hành mã hóa**")
+    try:
+        msg = await bot.wait_for("message", timeout=30.0, check=check)
+        attachment = msg.attachments[0]
 
-    # Xử lý session
-    elif message.author.id in sessions:
-        user_id = message.author.id
-        session = sessions[user_id]
-        
-        # Check timeout
-        if datetime.now() - session['time'] > timedelta(minutes=5):
-            del sessions[user_id]
-            await message.reply("❌ Session hết hạn!")
+        if not attachment.filename.endswith((".txt", ".md", ".log")):
+            await ctx.send("❌ Chỉ chấp nhận file .txt, .md, .log thôi nha.")
             return
 
-        if session['step'] == 'waiting_source':
-            # Get source code
-            source = ""
-            if message.attachments:
-                for att in message.attachments:
-                    if any(att.filename.endswith(ext) for ext in ['.txt', '.py', '.js', '.java', '.cpp']):
-                        source = (await att.read()).decode('utf-8')
-                        break
-            else:
-                source = message.content
+        file_bytes = await attachment.read()
+        content = file_bytes.decode("utf-8", errors="ignore")
 
-            if source:
-                session['source'] = source
-                session['step'] = 'waiting_password'
-                await message.reply("🔑 **Vui lòng nhập mật khẩu để mã hóa:**")
-            else:
-                await message.reply("❌ Không tìm thấy source code!")
+        if len(content) > 50000:
+            await ctx.send("⚠️ File quá dài (>50.000 ký tự)! Chỉ gửi phần đầu.")
+            content = content[:50000]
 
-        elif session['step'] == 'waiting_password':
-            password = message.content.strip()
-            if len(password) >= 4:
-                # Mã hóa
-                processing = await message.reply("🛡️ **Đang mã hóa...**")
-                encrypted = simple_encrypt(session['source'], password)
-                
-                # Tạo file
-                result = {
-                    'encrypted_data': encrypted,
-                    'timestamp': datetime.now().isoformat(),
-                    'algorithm': 'Base64+XOR'
-                }
-                
-                file_content = json.dumps(result, indent=2)
-                file = discord.File(fp=discord.BytesIO(file_content.encode()), filename="encrypted_code.secure")
-                
-                # Gửi kết quả
-                try:
-                    await message.author.send(f"🔐 **Mã hóa thành công!**\nMật khẩu: ||{password}||", file=file)
-                    await processing.edit(content="✅ **Đã gửi file mã hóa qua tin nhắn riêng!**")
-                except:
-                    await processing.edit(content="❌ Không thể gửi tin nhắn riêng!")
-                
-                del sessions[user_id]
-            else:
-                await message.reply("❌ Mật khẩu phải >= 4 ký tự!")
+        chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
+        await ctx.send(f"📖 **Nội dung `{attachment.filename}` ({len(chunks)} phần):**")
 
-    # Lệnh giải mã
-    elif message.content.startswith('!giaima'):
-        await message.reply("🔓 **Vui lòng gửi file .secure và mật khẩu giải mã:**")
+        for i, chunk in enumerate(chunks[:10]):  # gửi tối đa 10 phần để tránh spam
+            await ctx.send(f"```{chunk}```")
+        if len(chunks) > 10:
+            await ctx.send("⏹️ Nội dung bị cắt bớt (chỉ hiển thị 10 phần đầu).")
 
-    # Lệnh status
-    elif message.content == '!status':
-        await message.reply("🟢 **Bot đang hoạt động bình thường!**")
+    except asyncio.TimeoutError:
+        await ctx.send("⏰ Hết thời gian chờ file. Hãy thử lại `!docfile` nhé.")
 
-# Chạy bot
-print("🚀 Starting bot...")
-client.run(TOKEN)
+# =====================
+# 📁 DOCFILE SLASH CMD
+# =====================
+@bot.tree.command(name="docfile", description="Gửi file để bot đọc nội dung")
+async def docfile_slash(interaction: discord.Interaction):
+    await interaction.response.send_message("📎 Gửi file .txt / .md / .log bạn muốn đọc trong vòng 30 giây.", ephemeral=True)
+
+    def check(m):
+        return m.author == interaction.user and m.attachments
+
+    try:
+        msg = await bot.wait_for("message", timeout=30.0, check=check)
+        attachment = msg.attachments[0]
+
+        if not attachment.filename.endswith((".txt", ".md", ".log")):
+            await interaction.followup.send("❌ Chỉ chấp nhận file .txt, .md, .log thôi nha.")
+            return
+
+        file_bytes = await attachment.read()
+        content = file_bytes.decode("utf-8", errors="ignore")
+
+        if len(content) > 50000:
+            await interaction.followup.send("⚠️ File quá dài (>50.000 ký tự)! Chỉ gửi phần đầu.")
+            content = content[:50000]
+
+        chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
+        await interaction.followup.send(f"📖 **Nội dung `{attachment.filename}` ({len(chunks)} phần):**")
+
+        for i, chunk in enumerate(chunks[:10]):  # giới hạn 10 đoạn
+            await interaction.channel.send(f"```{chunk}```")
+        if len(chunks) > 10:
+            await interaction.channel.send("⏹️ Nội dung bị cắt bớt (chỉ hiển thị 10 phần đầu).")
+
+    except asyncio.TimeoutError:
+        await interaction.followup.send("⏰ Hết thời gian chờ file. Hãy thử lại `/docfile` nhé.")
+
+# =====================
+# 🧠 KHỞI CHẠY BOT
+# =====================
+TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    print("❌ Thiếu biến môi trường TOKEN!")
+else:
+    bot.run(TOKEN)
