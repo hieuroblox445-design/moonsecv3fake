@@ -4,12 +4,33 @@ from discord import app_commands
 import asyncio
 import io
 import os
+import threading
+from flask import Flask
 
+# =========================
+# ⚙️ Flask keep-alive setup
+# =========================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "✅ Bot is alive!"
+
+def run_alive():
+    app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    t = threading.Thread(target=run_alive)
+    t.daemon = True
+    t.start()
+
+# =========================
+# ⚙️ Discord Bot setup
+# =========================
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Khi bot khởi động
 @bot.event
 async def on_ready():
     print(f"✅ Bot đã đăng nhập: {bot.user}")
@@ -19,9 +40,9 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Lỗi sync slash: {e}")
 
-# =====================
+# =========================
 # 📁 DOCFILE PREFIX CMD
-# =====================
+# =========================
 @bot.command(name="docfile")
 async def docfile_prefix(ctx):
     await ctx.send("📎 Gửi file .txt / .md / .log bạn muốn đọc trong vòng 30 giây.")
@@ -55,12 +76,12 @@ async def docfile_prefix(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ Hết thời gian chờ file. Hãy thử lại `!docfile` nhé.")
 
-# =====================
+# =========================
 # 📁 DOCFILE SLASH CMD
-# =====================
+# =========================
 @bot.tree.command(name="docfile", description="Gửi file để bot đọc nội dung")
 async def docfile_slash(interaction: discord.Interaction):
-    await interaction.response.send_message("📎 Gửi file .txt / .md / .log bạn muốn đọc trong vòng 30 giây.", ephemeral=True)
+    await interaction.response.send_message("📎 Gửi file văn bản bạn muốn bot đọc (txt/md/log)... trong vòng 30 giây.", ephemeral=True)
 
     def check(m):
         return m.author == interaction.user and m.attachments
@@ -83,7 +104,7 @@ async def docfile_slash(interaction: discord.Interaction):
         chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
         await interaction.followup.send(f"📖 **Nội dung `{attachment.filename}` ({len(chunks)} phần):**")
 
-        for i, chunk in enumerate(chunks[:10]):  # giới hạn 10 đoạn
+        for i, chunk in enumerate(chunks[:10]):
             await interaction.channel.send(f"```{chunk}```")
         if len(chunks) > 10:
             await interaction.channel.send("⏹️ Nội dung bị cắt bớt (chỉ hiển thị 10 phần đầu).")
@@ -91,9 +112,11 @@ async def docfile_slash(interaction: discord.Interaction):
     except asyncio.TimeoutError:
         await interaction.followup.send("⏰ Hết thời gian chờ file. Hãy thử lại `/docfile` nhé.")
 
-# =====================
-# 🧠 KHỞI CHẠY BOT
-# =====================
+# =========================
+# 🚀 Run Flask + Discord
+# =========================
+keep_alive()  # chạy web server 0.0.0.0:8080
+
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     print("❌ Thiếu biến môi trường TOKEN!")
