@@ -150,7 +150,7 @@ async def encrypt_code(ctx):
         # Gửi file đã mã hóa
         with open(encrypted_filename, 'rb') as f:
             file = discord.File(f, filename=encrypted_filename)
-            await ctx.send(" Mã hóa thành công! File đã mã hóa:", file=file)
+            await ctx.send(" file đã được mã hóa ", file=file)
         
         # Xóa file tạm
         os.remove(encrypted_filename)
@@ -186,10 +186,10 @@ async def help_command(ctx):
     await ctx.send(help_text)
 
 # Slash command support
-@bot.tree.command(name="mahoa", description="Mã hóa file code thành file .lua")
+@bot.tree.command(name="mahoa", description="Mã hóa file code thành file .lua ")
 async def slash_encrypt(interaction: discord.Interaction):
     """Slash command cho mã hóa"""
-    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm.")
+    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm. `by HieuDRG`")
 
 @bot.event
 async def on_message(message):
