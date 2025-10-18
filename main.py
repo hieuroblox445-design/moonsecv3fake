@@ -189,7 +189,7 @@ async def help_command(ctx):
 @bot.tree.command(name="mahoa", description="Mã hóa file code thành file .lua ")
 async def slash_encrypt(interaction: discord.Interaction):
     """Slash command cho mã hóa"""
-    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm. `by HieuDRG`")
+    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm. ")
 
 @bot.event
 async def on_message(message):
