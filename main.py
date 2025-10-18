@@ -27,7 +27,7 @@ flask_thread.start()
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # Tắt help mặc định
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 def generate_encryption_key():
     """Tạo key mã hóa ngẫu nhiên"""
@@ -42,17 +42,37 @@ def xor_encrypt(data, key):
     return bytes(encrypted)
 
 def encrypt_lua_code(code, key):
-    """Mã hóa code Lua và tạo file .lua"""
+    """Mã hóa code Lua nhưng vẫn giữ code gốc bên trong"""
     # Mã hóa code
     encrypted_data = xor_encrypt(code.encode(), key)
-    
-    # Encode base64 để dễ lưu trữ
     encrypted_b64 = base64.b64encode(encrypted_data).decode()
     
-    # Tạo loader code Lua
-    loader_code = f'''
-local encrypted = "{encrypted_b64}"
-local key = "{key}"
+    # Tạo file .lua với code gốc được bảo vệ bên trong
+    protected_code = f'''-- File đã được mã hóa bảo vệ
+-- Decryptor tự động
+
+local encrypted_data = "{encrypted_b64}"
+local encryption_key = "{key}"
+
+local function base64_decode(data)
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    data = string.gsub(data, '[^'..b..'=]', '')
+    return (data:gsub('.', function(x)
+        if (x == '=') then return '' end
+        local r, f = '', (b:find(x) - 1)
+        for i = 6, 1, -1 do
+            r = r .. (f % 2 ^ i - f % 2 ^ (i - 1) > 0 and '1' or '0')
+        end
+        return r
+    end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
+        if (#x ~= 8) then return '' end
+        local c = 0
+        for i = 1, 8 do
+            c = c + (x:sub(i, i) == '1' and 2 ^ (8 - i) or 0)
+        end
+        return string.char(c)
+    end))
+end
 
 local function xor_decrypt(data, key)
     local result = ""
@@ -63,40 +83,100 @@ local function xor_decrypt(data, key)
     
     for i = 1, #data do
         local data_byte = data:byte(i)
-        local key_byte = key_bytes[((i-1) % #key_bytes) + 1]
+        local key_byte = key_bytes[((i - 1) % #key_bytes) + 1]
         result = result .. string.char(data_byte ~ key_byte)
     end
     return result
 end
 
-local function decode_base64(data)
-    local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    data = string.gsub(data, '[^'..b..'=]', '')
-    return (data:gsub('.', function(x)
-        if (x == '=') then return '' end
-        local r,f='',(b:find(x)-1)
+-- Giải mã và thực thi code gốc
+local function execute_original_code()
+    local decoded_data = base64_decode(encrypted_data)
+    local original_code = xor_decrypt(decoded_data, encryption_key)
+    
+    -- Thực thi code gốc
+    local loaded_function, error_msg = load(original_code)
+    if loaded_function then
+        loaded_function()
+    else
+        error("Lỗi khi thực thi code: " .. (error_msg or "unknown"))
+    end
+end
+
+-- Chạy code gốc
+execute_original_code()
+
+-- Code gốc được bảo vệ bên dưới (đã mã hóa)
+-- Không thể đọc trực tiếp mà phải thông qua giải mã
+'''
+    return protected_code
+
+def create_protected_lua(code, key):
+    """Tạo file Lua được bảo vệ với code gốc bên trong"""
+    # Mã hóa code
+    encrypted_data = xor_encrypt(code.encode(), key)
+    encrypted_b64 = base64.b64encode(encrypted_data).decode()
+    
+    # Tạo file Lua với cấu trúc bảo vệ
+    protected_code = f'''--[[
+File được bảo vệ - Protected File
+Mã hóa tự động bởi Discord Bot
+]]
+
+local _G = _G
+local string = string
+local table = table
+local load = load
+
+-- Dữ liệu mã hóa
+local _E = "{encrypted_b64}"
+local _K = "{key}"
+
+-- Hàm giải mã
+local function _D(d, k)
+    local r = ""
+    local kb = {{}}
+    for i = 1, #k do kb[i] = k:byte(i) end
+    for i = 1, #d do
+        local b = d:byte(i)
+        local kb = kb[((i-1) % #kb) + 1]
+        r = r .. string.char(b ~ kb)
+    end
+    return r
+end
+
+-- Hàm decode base64
+local function _B(d)
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    d = string.gsub(d, '[^'..b..'=]', '')
+    return (d:gsub('.', function(x)
+        if x == '=' then return '' end
+        local r,f = '',(b:find(x)-1)
         for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end
-        return r;
+        return r
     end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
-        if (#x ~= 8) then return '' end
+        if #x ~= 8 then return '' end
         local c=0
         for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end
         return string.char(c)
     end))
 end
 
-local decoded = decode_base64(encrypted)
-local decrypted = xor_decrypt(decoded, key)
-load(decrypted)()
+-- Giải mã và thực thi
+local decoded = _B(_E)
+local original = _D(decoded, _K)
+local fn, err = load(original)
+if fn then fn() else error(err or "Execution error") end
+
+-- Kết thúc file được bảo vệ
 '''
-    return loader_code
+    return protected_code
 
 @bot.event
 async def on_ready():
     print(f'{bot.user} đã kết nối thành công!')
     await bot.change_presence(activity=discord.Game(name="!mahoa để mã hóa code"))
     
-    # Đồng bộ slash commands
     try:
         synced = await bot.tree.sync()
         print(f"Đã đồng bộ {len(synced)} slash command(s)")
@@ -112,21 +192,19 @@ async def on_command_error(ctx, error):
 @bot.command(name='mahoa')
 async def encrypt_code(ctx):
     """Lệnh mã hóa file code"""
-    # Kiểm tra xem có file đính kèm không
     if not ctx.message.attachments:
-        await ctx.send("Vui lòng gửi file code đính kèm khi sử dụng lệnh `!mahoa`")
+        await ctx.send(" Vui lòng gửi file code đính kèm khi sử dụng lệnh `!mahoa`")
         return
     
     attachment = ctx.message.attachments[0]
     
     # Kiểm tra file type
-    valid_extensions = ['.lua', '.txt', '.py', '.js', '.cpp', '.c', '.java', '.php']
+    valid_extensions = ['.lua', '.txt', '.py', '.js', '.cpp', '.c', '.java', '.php', '.xml', '.json']
     if not any(attachment.filename.lower().endswith(ext) for ext in valid_extensions):
-        await ctx.send("File không hợp lệ. Chỉ chấp nhận file code (.lua, .txt, .py, .js, .cpp, .c, .java, .php)")
+        await ctx.send(" File không hợp lệ. Chỉ chấp nhận file code")
         return
     
     try:
-        # Gửi tin nhắn chờ
         wait_msg = await ctx.send(" Đang xử lý file...")
         
         # Tải file
@@ -136,67 +214,76 @@ async def encrypt_code(ctx):
         # Tạo key mã hóa
         encryption_key = generate_encryption_key()
         
-        # Mã hóa code
-        encrypted_lua_code = encrypt_lua_code(original_code, encryption_key)
+        # Tạo file được bảo vệ (giữ code gốc bên trong)
+        protected_lua_code = create_protected_lua(original_code, encryption_key)
         
         # Tạo tên file mới
         original_name = os.path.splitext(attachment.filename)[0]
-        encrypted_filename = f"{original_name}_encrypted.lua"
+        encrypted_filename = f"{original_name}_protected.lua"
         
         # Lưu file tạm
         with open(encrypted_filename, 'w', encoding='utf-8') as f:
-            f.write(encrypted_lua_code)
+            f.write(protected_lua_code)
         
         # Gửi file đã mã hóa
         with open(encrypted_filename, 'rb') as f:
             file = discord.File(f, filename=encrypted_filename)
-            await ctx.send(" file đã được mã hóa ", file=file)
+            embed = discord.Embed(
+                title=" Mã Hóa Thành Công",
+                description=f"File `{attachment.filename}` đã được bảo vệ",
+                color=0x00ff00
+            )
+            embed.add_field(
+                name=" Thông tin",
+                value="• File gốc được giữ nguyên bên trong\n• Có thể chạy bình thường\n• Code được bảo vệ khỏi chỉnh sửa",
+                inline=False
+            )
+            await ctx.send(embed=embed, file=file)
         
         # Xóa file tạm
         os.remove(encrypted_filename)
         await wait_msg.delete()
         
     except Exception as e:
-        await ctx.send(f" Lỗi khi xử lý file: {str(e)}")
+        await ctx.send(f"❌ Lỗi khi xử lý file: {str(e)}")
 
 @bot.command(name='ping')
 async def ping(ctx):
     """Kiểm tra độ trễ"""
     latency = round(bot.latency * 1000)
-    await ctx.send(f' Ping! Độ trễ: {latency}fps')
+    await ctx.send(f' Ping! Độ trễ: {latency}ms')
 
-@bot.command(name='help')
+@bot.command(name='trogiup')
 async def help_command(ctx):
     """Hướng dẫn sử dụng"""
     help_text = """
-**🤖 Bot Mã Hóa Code**
+**🤖 Bot Bảo Vệ Code**
 
 **Lệnh:**
-`!mahoa` - Mã hóa file code (gửi file đính kèm)
+`!mahoa` - Bảo vệ file code (giữ nguyên code gốc bên trong)
 `!ping` - Kiểm tra độ trễ
-`!help` - Hiển thị hướng dẫn
+`!trogiup` - Hiển thị hướng dẫn
 
-**Cách sử dụng:**
-1. Gửi lệnh `!mahoa` kèm file code đính kèm
-2. Bot sẽ mã hóa và gửi lại file .lua
-3. File .lua có thể chạy được với Lua interpreter
+**Đặc điểm:**
+• File .lua được tạo ra vẫn chứa code gốc bên trong
+• Code gốc được mã hóa và bảo vệ
+• File có thể chạy bình thường với Lua interpreter
+• Bảo vệ code khỏi chỉnh sửa trực tiếp
 
-**Hỗ trợ file:** .lua, .txt, .py, .js, .cpp, .c, .java, .php
-bot by`HieuDRG`
+**Hỗ trợ file:** .lua, .txt, .py, .js, .cpp, .c, .java, .php, .xml, .json
 """
     await ctx.send(help_text)
 
 # Slash command support
-@bot.tree.command(name="mahoa", description="Mã hóa file code thành file .lua ")
+@bot.tree.command(name="mahoa", description="Bảo vệ file code thành file .lua (giữ code gốc)")
 async def slash_encrypt(interaction: discord.Interaction):
     """Slash command cho mã hóa"""
-    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm. ")
+    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm.")
 
 @bot.event
 async def on_message(message):
-    # Xử lý cả prefix command và slash command
     if message.content in ['/mahoa', '!mahoa'] and not message.attachments:
-        await message.channel.send("Vui lòng gửi file code đính kèm khi sử dụng lệnh này.")
+        await message.channel.send(" Vui lòng gửi file code đính kèm khi sử dụng lệnh này.")
     
     await bot.process_commands(message)
 
