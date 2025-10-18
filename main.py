@@ -1,124 +1,200 @@
+from flask import Flask
+from threading import Thread
 import discord
 from discord.ext import commands
-from discord import app_commands
-import asyncio
-import io
 import os
-import threading
-from flask import Flask
+import random
+import string
+import base64
+import asyncio
 
-# =========================
-# ⚙️ Flask keep-alive setup
-# =========================
+# Flask app for keeping bot alive
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Bot is alive!"
+    return "Bot is running!"
 
-def run_alive():
-    app.run(host="0.0.0.0", port=8080)
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
 
-def keep_alive():
-    t = threading.Thread(target=run_alive)
-    t.daemon = True
-    t.start()
+# Khởi chạy Flask trong thread riêng
+flask_thread = Thread(target=run_flask)
+flask_thread.daemon = True
+flask_thread.start()
 
-# =========================
-# ⚙️ Discord Bot setup
-# =========================
+# Discord Bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+def generate_encryption_key():
+    """Tạo key mã hóa ngẫu nhiên"""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+
+def xor_encrypt(data, key):
+    """Mã hóa dữ liệu bằng XOR"""
+    encrypted = bytearray()
+    key_bytes = key.encode()
+    for i, byte in enumerate(data):
+        encrypted.append(byte ^ key_bytes[i % len(key_bytes)])
+    return bytes(encrypted)
+
+def encrypt_lua_code(code, key):
+    """Mã hóa code Lua và tạo file .lua"""
+    # Mã hóa code
+    encrypted_data = xor_encrypt(code.encode(), key)
+    
+    # Encode base64 để dễ lưu trữ
+    encrypted_b64 = base64.b64encode(encrypted_data).decode()
+    
+    # Tạo loader code Lua
+    loader_code = f'''
+local encrypted = "{encrypted_b64}"
+local key = "{key}"
+
+local function xor_decrypt(data, key)
+    local result = ""
+    local key_bytes = key:byte(1, #key)
+    for i = 1, #data do
+        local data_byte = data:byte(i)
+        local key_byte = key_bytes[((i-1) % #key_bytes) + 1]
+        result = result .. string.char(bit32.bxor(data_byte, key_byte))
+    end
+    return result
+end
+
+local function decode_base64(data)
+    local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    data = string.gsub(data, '[^'..b..'=]', '')
+    return (data:gsub('.', function(x)
+        if (x == '=') then return '' end
+        local r,f='',(b:find(x)-1)
+        for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end
+        return r;
+    end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
+        if (#x ~= 8) then return '' end
+        local c=0
+        for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end
+        return string.char(c)
+    end))
+end
+
+local decoded = decode_base64(encrypted)
+local decrypted = xor_decrypt(decoded, key)
+load(decrypted)()
+'''
+    return loader_code
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot đã đăng nhập: {bot.user}")
+    print(f'{bot.user} đã kết nối thành công!')
+    await bot.change_presence(activity=discord.Game(name="!mahoa để mã hóa code"))
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    await ctx.send(f"Có lỗi xảy ra: {str(error)}")
+
+@bot.command(name='mahoa')
+async def encrypt_code(ctx):
+    """Lệnh mã hóa file code"""
+    # Kiểm tra xem có file đính kèm không
+    if not ctx.message.attachments:
+        await ctx.send("Vui lòng gửi file code đính kèm khi sử dụng lệnh `!mahoa`")
+        return
+    
+    attachment = ctx.message.attachments[0]
+    
+    # Kiểm tra file type
+    valid_extensions = ['.lua', '.txt', '.py', '.js', '.cpp', '.c', '.java', '.php']
+    if not any(attachment.filename.lower().endswith(ext) for ext in valid_extensions):
+        await ctx.send("File không hợp lệ. Chỉ chấp nhận file code (.lua, .txt, .py, .js, .cpp, .c, .java, .php)")
+        return
+    
     try:
-        synced = await bot.tree.sync()
-        print(f"🔧 Slash commands synced: {len(synced)} lệnh")
+        # Gửi tin nhắn chờ
+        wait_msg = await ctx.send("🔄 Đang xử lý file...")
+        
+        # Tải file
+        file_content = await attachment.read()
+        original_code = file_content.decode('utf-8')
+        
+        # Tạo key mã hóa
+        encryption_key = generate_encryption_key()
+        
+        # Mã hóa code
+        encrypted_lua_code = encrypt_lua_code(original_code, encryption_key)
+        
+        # Tạo tên file mới
+        original_name = os.path.splitext(attachment.filename)[0]
+        encrypted_filename = f"{original_name}_encrypted.lua"
+        
+        # Lưu file tạm
+        with open(encrypted_filename, 'w', encoding='utf-8') as f:
+            f.write(encrypted_lua_code)
+        
+        # Gửi file đã mã hóa
+        with open(encrypted_filename, 'rb') as f:
+            file = discord.File(f, filename=encrypted_filename)
+            await ctx.send("✅ Mã hóa thành công! File đã mã hóa:", file=file)
+        
+        # Xóa file tạm
+        os.remove(encrypted_filename)
+        await wait_msg.delete()
+        
     except Exception as e:
-        print(f"❌ Lỗi sync slash: {e}")
+        await ctx.send(f"❌ Lỗi khi xử lý file: {str(e)}")
 
-# =========================
-# 📁 DOCFILE PREFIX CMD
-# =========================
-@bot.command(name="docfile")
-async def docfile_prefix(ctx):
-    await ctx.send("📎 Gửi file .txt / .md / .log bạn muốn đọc trong vòng 30 giây.")
+@bot.command(name='ping')
+async def ping(ctx):
+    """Kiểm tra độ trễ"""
+    latency = round(bot.latency * 1000)
+    await ctx.send(f'🏓 Pong! Độ trễ: {latency}ms')
 
-    def check(m):
-        return m.author == ctx.author and m.attachments
+@bot.command(name='help')
+async def help_command(ctx):
+    """Hướng dẫn sử dụng"""
+    help_text = """
+**🤖 Bot Mã Hóa Code**
 
-    try:
-        msg = await bot.wait_for("message", timeout=30.0, check=check)
-        attachment = msg.attachments[0]
+**Lệnh:**
+`!mahoa` - Mã hóa file code (gửi file đính kèm)
+`!ping` - Kiểm tra độ trễ
+`!help` - Hiển thị hướng dẫn
 
-        if not attachment.filename.endswith((".txt", ".md", ".log")):
-            await ctx.send("❌ Chỉ chấp nhận file .txt, .md, .log thôi nha.")
-            return
+**Cách sử dụng:**
+1. Gửi lệnh `!mahoa` kèm file code đính kèm
+2. Bot sẽ mã hóa và gửi lại file .lua
+3. File .lua có thể chạy được với Lua interpreter
 
-        file_bytes = await attachment.read()
-        content = file_bytes.decode("utf-8", errors="ignore")
+**Hỗ trợ file:** .lua, .txt, .py, .js, .cpp, .c, .java, .php
+"""
+    await ctx.send(help_text)
 
-        if len(content) > 50000:
-            await ctx.send("⚠️ File quá dài (>50.000 ký tự)! Chỉ gửi phần đầu.")
-            content = content[:50000]
+# Slash command support
+@bot.tree.command(name="mahoa", description="Mã hóa file code thành file .lua")
+async def slash_encrypt(interaction: discord.Interaction):
+    """Slash command cho mã hóa"""
+    await interaction.response.send_message("Vui lòng gửi file code đính kèm khi sử dụng lệnh này. Sử dụng `!mahoa` với file đính kèm.")
 
-        chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
-        await ctx.send(f"📖 **Nội dung `{attachment.filename}` ({len(chunks)} phần):**")
+@bot.event
+async def on_message(message):
+    # Xử lý cả prefix command và slash command
+    if message.content in ['/mahoa', '!mahoa'] and not message.attachments:
+        await message.channel.send("Vui lòng gửi file code đính kèm khi sử dụng lệnh này.")
+    
+    await bot.process_commands(message)
 
-        for i, chunk in enumerate(chunks[:10]):  # gửi tối đa 10 phần để tránh spam
-            await ctx.send(f"```{chunk}```")
-        if len(chunks) > 10:
-            await ctx.send("⏹️ Nội dung bị cắt bớt (chỉ hiển thị 10 phần đầu).")
-
-    except asyncio.TimeoutError:
-        await ctx.send("⏰ Hết thời gian chờ file. Hãy thử lại `!docfile` nhé.")
-
-# =========================
-# 📁 DOCFILE SLASH CMD
-# =========================
-@bot.tree.command(name="docfile", description="Gửi file để bot đọc nội dung")
-async def docfile_slash(interaction: discord.Interaction):
-    await interaction.response.send_message("📎 Gửi file văn bản bạn muốn bot đọc (txt/md/log)... trong vòng 30 giây.", ephemeral=True)
-
-    def check(m):
-        return m.author == interaction.user and m.attachments
-
-    try:
-        msg = await bot.wait_for("message", timeout=30.0, check=check)
-        attachment = msg.attachments[0]
-
-        if not attachment.filename.endswith((".txt", ".md", ".log")):
-            await interaction.followup.send("❌ Chỉ chấp nhận file .txt, .md, .log thôi nha.")
-            return
-
-        file_bytes = await attachment.read()
-        content = file_bytes.decode("utf-8", errors="ignore")
-
-        if len(content) > 50000:
-            await interaction.followup.send("⚠️ File quá dài (>50.000 ký tự)! Chỉ gửi phần đầu.")
-            content = content[:50000]
-
-        chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
-        await interaction.followup.send(f"📖 **Nội dung `{attachment.filename}` ({len(chunks)} phần):**")
-
-        for i, chunk in enumerate(chunks[:10]):
-            await interaction.channel.send(f"```{chunk}```")
-        if len(chunks) > 10:
-            await interaction.channel.send("⏹️ Nội dung bị cắt bớt (chỉ hiển thị 10 phần đầu).")
-
-    except asyncio.TimeoutError:
-        await interaction.followup.send("⏰ Hết thời gian chờ file. Hãy thử lại `/docfile` nhé.")
-
-# =========================
-# 🚀 Run Flask + Discord
-# =========================
-keep_alive()  # chạy web server 0.0.0.0:8080
-
-TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    print("❌ Thiếu biến môi trường TOKEN!")
-else:
-    bot.run(TOKEN)
+# Chạy bot với token từ environment variable
+if __name__ == "__main__":
+    token = os.environ.get('TOKEN')
+    if not token:
+        print("Lỗi: TOKEN không được tìm thấy trong environment variables!")
+        exit(1)
+    
+    print("🤖 Đang khởi động bot...")
+    print("🌐 Flask server đang chạy trên port 8080")
+    bot.run(token)
