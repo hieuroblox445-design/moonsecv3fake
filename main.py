@@ -27,7 +27,7 @@ flask_thread.start()
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # Tắt help mặc định
 
 def generate_encryption_key():
     """Tạo key mã hóa ngẫu nhiên"""
@@ -56,11 +56,15 @@ local key = "{key}"
 
 local function xor_decrypt(data, key)
     local result = ""
-    local key_bytes = key:byte(1, #key)
+    local key_bytes = {{}}
+    for i = 1, #key do
+        key_bytes[i] = key:byte(i)
+    end
+    
     for i = 1, #data do
         local data_byte = data:byte(i)
         local key_byte = key_bytes[((i-1) % #key_bytes) + 1]
-        result = result .. string.char(bit32.bxor(data_byte, key_byte))
+        result = result .. string.char(data_byte ~ key_byte)
     end
     return result
 end
@@ -91,6 +95,13 @@ load(decrypted)()
 async def on_ready():
     print(f'{bot.user} đã kết nối thành công!')
     await bot.change_presence(activity=discord.Game(name="!mahoa để mã hóa code"))
+    
+    # Đồng bộ slash commands
+    try:
+        synced = await bot.tree.sync()
+        print(f"Đã đồng bộ {len(synced)} slash command(s)")
+    except Exception as e:
+        print(f"Lỗi đồng bộ slash commands: {e}")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -116,7 +127,7 @@ async def encrypt_code(ctx):
     
     try:
         # Gửi tin nhắn chờ
-        wait_msg = await ctx.send("🔄 Đang xử lý file...")
+        wait_msg = await ctx.send(" Đang xử lý file...")
         
         # Tải file
         file_content = await attachment.read()
@@ -139,22 +150,22 @@ async def encrypt_code(ctx):
         # Gửi file đã mã hóa
         with open(encrypted_filename, 'rb') as f:
             file = discord.File(f, filename=encrypted_filename)
-            await ctx.send("✅ Mã hóa thành công! File đã mã hóa:", file=file)
+            await ctx.send(" Mã hóa thành công! File đã mã hóa:", file=file)
         
         # Xóa file tạm
         os.remove(encrypted_filename)
         await wait_msg.delete()
         
     except Exception as e:
-        await ctx.send(f"❌ Lỗi khi xử lý file: {str(e)}")
+        await ctx.send(f" Lỗi khi xử lý file: {str(e)}")
 
 @bot.command(name='ping')
 async def ping(ctx):
     """Kiểm tra độ trễ"""
     latency = round(bot.latency * 1000)
-    await ctx.send(f'🏓 Pong! Độ trễ: {latency}ms')
+    await ctx.send(f' Ping! Độ trễ: {latency}ms')
 
-@bot.command(name='help')
+@bot.command(name='trogiup')
 async def help_command(ctx):
     """Hướng dẫn sử dụng"""
     help_text = """
@@ -163,7 +174,7 @@ async def help_command(ctx):
 **Lệnh:**
 `!mahoa` - Mã hóa file code (gửi file đính kèm)
 `!ping` - Kiểm tra độ trễ
-`!help` - Hiển thị hướng dẫn
+`!trogiup` - Hiển thị hướng dẫn
 
 **Cách sử dụng:**
 1. Gửi lệnh `!mahoa` kèm file code đính kèm
