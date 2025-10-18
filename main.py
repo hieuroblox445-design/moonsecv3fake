@@ -163,9 +163,9 @@ async def encrypt_code(ctx):
 async def ping(ctx):
     """Kiểm tra độ trễ"""
     latency = round(bot.latency * 1000)
-    await ctx.send(f' Ping! Độ trễ: {latency}ms')
+    await ctx.send(f' Ping! Độ trễ: {latency}fps')
 
-@bot.command(name='trogiup')
+@bot.command(name='help')
 async def help_command(ctx):
     """Hướng dẫn sử dụng"""
     help_text = """
@@ -174,7 +174,7 @@ async def help_command(ctx):
 **Lệnh:**
 `!mahoa` - Mã hóa file code (gửi file đính kèm)
 `!ping` - Kiểm tra độ trễ
-`!trogiup` - Hiển thị hướng dẫn
+`!help` - Hiển thị hướng dẫn
 
 **Cách sử dụng:**
 1. Gửi lệnh `!mahoa` kèm file code đính kèm
@@ -182,6 +182,7 @@ async def help_command(ctx):
 3. File .lua có thể chạy được với Lua interpreter
 
 **Hỗ trợ file:** .lua, .txt, .py, .js, .cpp, .c, .java, .php
+bot by`HieuDRG`
 """
     await ctx.send(help_text)
 
